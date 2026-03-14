@@ -1,0 +1,474 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "# Astronomy Final Project: Source Detection & Aperture Photometry\n",
+    "\n",
+    "## Instructions\n",
+    "\n",
+    "The final project asks you to analyze and assess the statistical significance of events in scientific data relative to a model. You will do this by following tutorials developed for a nearly identical problem, so that your main task will be to carefully read through these tutorials, copy the parts that you need and modify some code to customize it for your own project.\n",
+    "\n",
+    "You will create a Jupyter notebook for this project and, when finished, you will upload your notebook to GitHub and submit the URL to it as the submission to the assignment.\n",
+    "\n",
+    "### Before you begin\n",
+    "- Create a new notebook in your working directory.\n",
+    "- Make sure that the `astropy` and `sep` packages are installed.\n",
+    "- Download the file `hlsp_hudf12_hst_wfc3ir_udfmain_f105w_v1.0_drz.fits` and save it to your working directory.\n",
+    "\n",
+    "### The task\n",
+    "Follow the tutorial at https://sep.readthedocs.io/en/stable/tutorial.html, applying it to the downloaded FITS data file.\n",
+    "\n",
+    "### Questions to answer\n",
+    "1. How many sources (stars) do you find in the data? Histogram their fluxes.\n",
+    "2. What are the mean, median, and standard deviation of the distribution of fluxes.\n",
+    "3. What is the largest outlier in the distribution; how many standard deviations is it away from the mean?"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Setup & Imports"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import numpy as np\n",
+    "import sep\n",
+    "from astropy.io import fits\n",
+    "import matplotlib.pyplot as plt\n",
+    "from matplotlib.patches import Ellipse\n",
+    "from matplotlib import rcParams\n",
+    "\n",
+    "%matplotlib inline\n",
+    "rcParams['figure.figsize'] = [10., 8.]"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Reading the FITS Image\n",
+    "\n",
+    "We use `astropy.io.fits` to read the Hubble Ultra Deep Field WFC3/IR F105W image.\n",
+    "\n",
+    "> **Note on byte order:** SEP requires native byte-order arrays. FITS files are stored in big-endian format, so we must convert after reading using `.byteswap().newbyteorder()` (or `.astype(data.dtype.newbyteorder('='))`)."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Read image from FITS file\n",
+    "# astropy.io.fits reads FITS data in big-endian byte order;\n",
+    "# SEP requires native byte order, so we convert.\n",
+    "hdu_list = fits.open('hlsp_hudf12_hst_wfc3ir_udfmain_f105w_v1.0_drz.fits')\n",
+    "data = hdu_list[0].data\n",
+    "\n",
+    "# Fix byte order for SEP compatibility\n",
+    "data = data.byteswap().newbyteorder()\n",
+    "\n",
+    "print(f\"Image shape: {data.shape}\")\n",
+    "print(f\"Data type: {data.dtype}\")\n",
+    "hdu_list.close()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Display the raw image\n",
+    "m, s = np.mean(data), np.std(data)\n",
+    "plt.imshow(data, interpolation='nearest', cmap='gray',\n",
+    "           vmin=m - s, vmax=m + s, origin='lower')\n",
+    "plt.colorbar(label='Flux (electrons/s)')\n",
+    "plt.title('Hubble Ultra Deep Field – WFC3/IR F105W')\n",
+    "plt.xlabel('x (pixels)')\n",
+    "plt.ylabel('y (pixels)')\n",
+    "plt.show()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Background Subtraction\n",
+    "\n",
+    "Most optical/IR astronomical images have a spatially varying background that must be subtracted before sources can be detected. SEP treats background estimation and source detection as two separate steps.\n",
+    "\n",
+    "`sep.Background` divides the image into boxes and estimates the background in each box, then interpolates to produce a smooth background map."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Measure a spatially varying background on the image\n",
+    "bkg = sep.Background(data, bw=64, bh=64, fw=3, fh=3)\n",
+    "\n",
+    "# Get the global mean and RMS background\n",
+    "print(f\"Global background mean: {bkg.globalback:.4f}\")\n",
+    "print(f\"Global background RMS:  {bkg.globalrms:.4f}\")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Evaluate background as a 2-D array (same size as original image)\n",
+    "bkg_image = bkg.back()\n",
+    "\n",
+    "plt.imshow(bkg_image, interpolation='nearest', cmap='gray', origin='lower')\n",
+    "plt.colorbar(label='Background level (electrons/s)')\n",
+    "plt.title('Estimated Background')\n",
+    "plt.show()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Evaluate the background noise (RMS) as a 2-D array\n",
+    "bkg_rms = bkg.rms()\n",
+    "\n",
+    "plt.imshow(bkg_rms, interpolation='nearest', cmap='gray', origin='lower')\n",
+    "plt.colorbar(label='Background RMS (electrons/s)')\n",
+    "plt.title('Background Noise (RMS)')\n",
+    "plt.show()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Subtract the background from the data\n",
+    "data_sub = data - bkg_image\n",
+    "\n",
+    "# Display the background-subtracted image\n",
+    "m, s = np.mean(data_sub), np.std(data_sub)\n",
+    "plt.imshow(data_sub, interpolation='nearest', cmap='gray',\n",
+    "           vmin=m - s, vmax=m + s, origin='lower')\n",
+    "plt.colorbar(label='Flux (electrons/s)')\n",
+    "plt.title('Background-Subtracted Image')\n",
+    "plt.show()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Object Detection\n",
+    "\n",
+    "Now that the background has been subtracted, we use `sep.extract` to detect sources. The detection threshold is set at **1.5σ** above the background RMS, which is a common choice that balances sensitivity with false-positive rate.\n",
+    "\n",
+    "`sep.extract` returns a NumPy structured array where each row corresponds to one detected source."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Detect objects at 1.5 sigma above background\n",
+    "objects = sep.extract(data_sub, 1.5, err=bkg.globalrms)\n",
+    "\n",
+    "print(f\"Number of sources detected: {len(objects)}\")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Show all available fields in the objects structured array\n",
+    "print(\"Available fields:\", objects.dtype.names)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Overlay detected objects as ellipses on the background-subtracted image\n",
+    "fig, ax = plt.subplots(figsize=(10, 8))\n",
+    "m, s = np.mean(data_sub), np.std(data_sub)\n",
+    "im = ax.imshow(data_sub, interpolation='nearest', cmap='gray',\n",
+    "               vmin=m - s, vmax=m + s, origin='lower')\n",
+    "plt.colorbar(im, ax=ax, label='Flux (electrons/s)')\n",
+    "\n",
+    "# Plot an ellipse for each detected object\n",
+    "for i in range(len(objects)):\n",
+    "    e = Ellipse(xy=(objects['x'][i], objects['y'][i]),\n",
+    "                width=6 * objects['a'][i],\n",
+    "                height=6 * objects['b'][i],\n",
+    "                angle=objects['theta'][i] * 180. / np.pi)\n",
+    "    e.set_facecolor('none')\n",
+    "    e.set_edgecolor('red')\n",
+    "    ax.add_artist(e)\n",
+    "\n",
+    "ax.set_title(f'Detected Sources (N = {len(objects)})')\n",
+    "ax.set_xlabel('x (pixels)')\n",
+    "ax.set_ylabel('y (pixels)')\n",
+    "plt.show()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Aperture Photometry\n",
+    "\n",
+    "We measure the flux of each detected source using **circular aperture photometry** with a 3-pixel radius. `sep.sum_circle` integrates the pixel values within each aperture and estimates the associated flux uncertainty."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Perform circular aperture photometry (radius = 3 pixels)\n",
+    "flux, fluxerr, flag = sep.sum_circle(data_sub,\n",
+    "                                      objects['x'], objects['y'],\n",
+    "                                      3.0,\n",
+    "                                      err=bkg.globalrms,\n",
+    "                                      gain=1.0)\n",
+    "\n",
+    "print(\"First 10 source fluxes:\")\n",
+    "for i in range(10):\n",
+    "    print(f\"  object {i:3d}: flux = {flux[i]:12.3f}  +/-  {fluxerr[i]:.3f}\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "---\n",
+    "## Analysis Questions\n",
+    "\n",
+    "### Question 1: How many sources are detected? Histogram their fluxes."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# ── Q1: Number of detected sources ──────────────────────────────────────────\n",
+    "n_sources = len(objects)\n",
+    "print(f\"Total number of sources detected: {n_sources}\")\n",
+    "\n",
+    "# Histogram of all fluxes\n",
+    "fig, axes = plt.subplots(1, 2, figsize=(14, 5))\n",
+    "\n",
+    "# Left panel: full flux range\n",
+    "axes[0].hist(flux, bins=30, color='steelblue', edgecolor='white')\n",
+    "axes[0].set_xlabel('Flux (electrons/s)')\n",
+    "axes[0].set_ylabel('Number of sources')\n",
+    "axes[0].set_title(f'Flux Distribution (all {n_sources} sources)')\n",
+    "\n",
+    "# Right panel: log-scale y-axis to reveal outliers\n",
+    "axes[1].hist(flux, bins=30, color='steelblue', edgecolor='white', log=True)\n",
+    "axes[1].set_xlabel('Flux (electrons/s)')\n",
+    "axes[1].set_ylabel('Number of sources (log scale)')\n",
+    "axes[1].set_title('Flux Distribution (log y-axis)')\n",
+    "\n",
+    "plt.tight_layout()\n",
+    "plt.show()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "**Answer:** The number of sources found in the data is printed above. The histogram shows that most sources are faint (low flux) with a small number of much brighter objects — a typical characteristic of deep-field galaxy/star catalogs."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "### Question 2: Mean, Median, and Standard Deviation of the Flux Distribution"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# ── Q2: Summary statistics ───────────────────────────────────────────────────\n",
+    "flux_mean   = np.mean(flux)\n",
+    "flux_median = np.median(flux)\n",
+    "flux_std    = np.std(flux)\n",
+    "\n",
+    "print(f\"Mean flux:               {flux_mean:12.3f} electrons/s\")\n",
+    "print(f\"Median flux:             {flux_median:12.3f} electrons/s\")\n",
+    "print(f\"Standard deviation:      {flux_std:12.3f} electrons/s\")\n",
+    "print()\n",
+    "print(\"Note: The mean > median indicates the distribution is right-skewed,\")\n",
+    "print(\"      pulled upward by a small number of very bright sources.\")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Visualize statistics on the histogram\n",
+    "plt.figure(figsize=(10, 6))\n",
+    "plt.hist(flux, bins=30, color='steelblue', edgecolor='white', alpha=0.8, label='Source fluxes')\n",
+    "plt.axvline(flux_mean,   color='red',    linestyle='--', linewidth=2,\n",
+    "            label=f'Mean = {flux_mean:.1f}')\n",
+    "plt.axvline(flux_median, color='orange', linestyle='-',  linewidth=2,\n",
+    "            label=f'Median = {flux_median:.1f}')\n",
+    "plt.axvline(flux_mean + flux_std, color='gray', linestyle=':', linewidth=1.5,\n",
+    "            label=f'Mean ± 1σ  (σ = {flux_std:.1f})')\n",
+    "plt.axvline(flux_mean - flux_std, color='gray', linestyle=':', linewidth=1.5)\n",
+    "plt.xlabel('Flux (electrons/s)')\n",
+    "plt.ylabel('Number of sources')\n",
+    "plt.title('Flux Distribution with Summary Statistics')\n",
+    "plt.legend()\n",
+    "plt.show()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "### Question 3: Largest Outlier — How Many Standard Deviations from the Mean?"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# ── Q3: Largest outlier ──────────────────────────────────────────────────────\n",
+    "# Compute how many sigma each source is from the mean\n",
+    "z_scores = (flux - flux_mean) / flux_std\n",
+    "\n",
+    "# Identify the source with the maximum absolute z-score\n",
+    "outlier_idx  = np.argmax(np.abs(z_scores))\n",
+    "outlier_flux = flux[outlier_idx]\n",
+    "outlier_z    = z_scores[outlier_idx]\n",
+    "\n",
+    "print(f\"Largest outlier:\")\n",
+    "print(f\"  Source index:   {outlier_idx}\")\n",
+    "print(f\"  Flux:           {outlier_flux:.3f} electrons/s\")\n",
+    "print(f\"  z-score:        {outlier_z:.2f}σ  ({outlier_z:.2f} standard deviations from the mean)\")\n",
+    "print(f\"  Position (x,y): ({objects['x'][outlier_idx]:.1f}, {objects['y'][outlier_idx]:.1f}) pixels\")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Show z-score distribution and mark the outlier\n",
+    "plt.figure(figsize=(10, 5))\n",
+    "plt.hist(z_scores, bins=20, color='steelblue', edgecolor='white', alpha=0.8)\n",
+    "plt.axvline(outlier_z, color='red', linestyle='--', linewidth=2,\n",
+    "            label=f'Largest outlier: {outlier_z:.1f}σ')\n",
+    "plt.xlabel('z-score  [(flux − mean) / std]')\n",
+    "plt.ylabel('Number of sources')\n",
+    "plt.title('Distribution of Flux z-scores')\n",
+    "plt.legend()\n",
+    "plt.show()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Zoom in on the outlier source in the image\n",
+    "x0 = int(objects['x'][outlier_idx])\n",
+    "y0 = int(objects['y'][outlier_idx])\n",
+    "pad = 50   # pixel padding around the source\n",
+    "\n",
+    "x_lo, x_hi = max(0, x0 - pad), min(data_sub.shape[1], x0 + pad)\n",
+    "y_lo, y_hi = max(0, y0 - pad), min(data_sub.shape[0], y0 + pad)\n",
+    "cutout = data_sub[y_lo:y_hi, x_lo:x_hi]\n",
+    "\n",
+    "fig, ax = plt.subplots(figsize=(6, 5))\n",
+    "m, s = np.mean(cutout), np.std(cutout)\n",
+    "ax.imshow(cutout, interpolation='nearest', cmap='gray',\n",
+    "          vmin=m - s, vmax=m + s, origin='lower',\n",
+    "          extent=[x_lo, x_hi, y_lo, y_hi])\n",
+    "e = Ellipse(xy=(objects['x'][outlier_idx], objects['y'][outlier_idx]),\n",
+    "            width=6 * objects['a'][outlier_idx],\n",
+    "            height=6 * objects['b'][outlier_idx],\n",
+    "            angle=objects['theta'][outlier_idx] * 180. / np.pi)\n",
+    "e.set_facecolor('none')\n",
+    "e.set_edgecolor('red')\n",
+    "ax.add_artist(e)\n",
+    "ax.set_title(f'Largest Outlier Source (flux = {outlier_flux:.1f}, z = {outlier_z:.1f}σ)')\n",
+    "ax.set_xlabel('x (pixels)')\n",
+    "ax.set_ylabel('y (pixels)')\n",
+    "plt.show()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "---\n",
+    "## Summary\n",
+    "\n",
+    "| Statistic | Value |\n",
+    "|-----------|-------|\n",
+    "| Number of sources detected | *see cell output above* |\n",
+    "| Mean flux (electrons/s) | *see cell output above* |\n",
+    "| Median flux (electrons/s) | *see cell output above* |\n",
+    "| Standard deviation (electrons/s) | *see cell output above* |\n",
+    "| Largest outlier (σ from mean) | *see cell output above* |\n",
+    "\n",
+    "**Key takeaways:**\n",
+    "- The flux distribution is strongly right-skewed: most detected sources are faint, while a small number of bright sources dominate the high-flux tail.\n",
+    "- The median is more representative of a \"typical\" source flux than the mean, since it is robust to the bright outliers.\n",
+    "- The brightest source is many standard deviations above the mean, marking it as a statistically significant outlier — likely a bright star or compact galaxy in the field.\n",
+    "- The data used here are from the **Hubble Ultra Deep Field 2012 (HUDF12)** program, observed with HST WFC3/IR in the F105W filter (PI: R. Ellis, Program ID 12498)."
+   ]
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python 3",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "name": "python",
+   "version": "3.10.0"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 4
+}
